@@ -135,6 +135,8 @@ func SetCacheControlPrivate(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+var d *helpisu.DBDisconnectDetector
+
 // Run は cmd/isuports/main.go から呼ばれるエントリーポイントです
 func Run() {
 	e := echo.New()
@@ -195,6 +197,23 @@ func Run() {
 	}
 	adminDB.SetMaxOpenConns(10)
 	defer adminDB.Close()
+
+	helpisu.WaitDBStartUp(adminDB.DB)
+
+	d = helpisu.NewDBDisconnectDetector(5, 90, adminDB.DB)
+	go d.Start()
+
+	// プール内に保持できるアイドル接続数の制限を設定 (default: 2)
+	adminDB.SetMaxIdleConns(1024)
+	// 接続してから再利用できる最大期間
+	adminDB.SetConnMaxLifetime(0)
+	// アイドル接続してから再利用できる最大期間
+	adminDB.SetConnMaxIdleTime(0)
+
+	http.DefaultTransport.(*http.Transport).MaxIdleConns = 0           // default: 100
+	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024 // default: 2
+	http.DefaultTransport.(*http.Transport).ForceAttemptHTTP2 = true
+	http.DefaultClient.Timeout = 5 * time.Second // 問題の切り分け用
 
 	go http.ListenAndServe(":6060", nil)
 
@@ -515,8 +534,19 @@ func initializeHandler(c echo.Context) error {
 	playerCache.Reset()
 	competitionCache.Reset()
 	tenantCache.Reset()
+	compFinishCache.Reset()
+	billingReportCache.Reset()
 
 	go dispenseUpdate()
+
+	visitHistories.Set(0, make([]VisitHistoryRow, 0, 100))
+	insertVisitHistory := helpisu.NewTicker(2000, delayedInsertVisitHistory)
+	go insertVisitHistory.Start()
+
+	updateCompetitionFinish := helpisu.NewTicker(2000, updateCompetitionFinish)
+	go updateCompetitionFinish.Start()
+
+	d.Pause()
 
 	res := InitializeHandlerResult{
 		Lang: "go",

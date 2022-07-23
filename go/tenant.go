@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/logica0419/helpisu"
 )
 
 type CompetitionDetail struct {
@@ -70,7 +71,9 @@ func competitionsAddHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResult{Status: true, Data: res})
 }
 
-// テナント管理者向けAPI
+var compFinishCache = helpisu.NewCache[int, []string]()
+
+/// テナント管理者向けAPI
 // POST /api/organizer/competition/:competition_id/finish
 // 大会を終了する
 func competitionFinishHandler(c echo.Context) error {
@@ -112,8 +115,21 @@ func competitionFinishHandler(c echo.Context) error {
 		)
 	}
 
+	finish, ok := compFinishCache.Get(0)
+	if !ok {
+		finish = []string{}
+	}
+	compFinishCache.Set(0, append(finish, strconv.Itoa(int(v.tenantID))+id))
+
 	competitionCache.Delete(id)
 	return c.JSON(http.StatusOK, SuccessResult{Status: true})
+}
+
+func updateCompetitionFinish() {
+	finish, _ := compFinishCache.GetAndDelete(0)
+	for j := range finish {
+		billingReportCache.Delete(finish[j])
+	}
 }
 
 type ScoreHandlerResult struct {
